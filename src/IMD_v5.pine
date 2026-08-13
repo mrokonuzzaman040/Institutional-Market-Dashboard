@@ -1,0 +1,1110 @@
+//@version=6
+// Institutional Market Dashboard v5 — see README.md for logic
+indicator("Institutional Market Dashboard v5", "IMD v5", overlay = true,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ═══ ① TABLE ═══
+grpTbl   = "① Table"
+posIn    = input.string("Top Right", "Position", group = grpTbl,
+     options = ["Top Left", "Top Center", "Top Right",
+                "Middle Left", "Middle Center", "Middle Right",
+                "Bottom Left", "Bottom Center", "Bottom Right"])
+txtIn    = input.string("Normal", "Text Size", group = grpTbl,
+     options = ["Tiny", "Small", "Normal", "Large"])
+transp   = input.int(10, "Background Transparency (%)", 0, 100, group = grpTbl)
+viewMode = input.string("Complete", "View Mode", options = ["Complete", "Compact"], group = grpTbl)
+
+// ═══ ② THEME ═══
+grpTheme = "② Theme & Colors"
+mode     = input.string("Dark", "Mode", options = ["Dark", "Light"], group = grpTheme)
+useCustom= input.bool(false, "Use Custom Colors", group = grpTheme)
+cBullIn  = input.color(#26a69a, "Bullish",  inline = "c1", group = grpTheme)
+cBearIn  = input.color(#ef5350, "Bearish",  inline = "c1", group = grpTheme)
+cNeutIn  = input.color(#ffb300, "Neutral",  inline = "c2", group = grpTheme)
+cHeadIn  = input.color(#1e88e5, "Header",   inline = "c2", group = grpTheme)
+
+// ═══ ③ SECTIONS ═══
+grpSec   = "③ Visible Sections"
+showTF   = input.bool(true, "Timeframe Rows",       group = grpSec)
+showSum  = input.bool(true, "Institutional Summary", group = grpSec)
+showSMC  = input.bool(true, "Smart Money",           group = grpSec)
+showV3   = input.bool(true, "Decision",              group = grpSec)
+showPlan = input.bool(true, "Trade Plan (SL/TP/RR)", group = grpSec)
+showDraw = input.bool(true, "SMC Drawings on Chart", group = grpSec)
+
+// ═══ ④ MTF DATA ═══
+grpData  = "④ Multi-Timeframe Data"
+liveMode = input.bool(false, "Real-Time Mode (allows micro-repaint)", group = grpData,
+     tooltip = "OFF (recommended): strict no-repaint, last closed candle only.")
+skipLower= input.bool(true, "Exclude TFs Below Chart TF", group = grpData)
+en1  = input.bool(true, "1m",  inline = "t1", group = grpData)
+en5  = input.bool(true, "5m",  inline = "t1", group = grpData)
+en15 = input.bool(true, "15m", inline = "t1", group = grpData)
+en30 = input.bool(true, "30m", inline = "t2", group = grpData)
+en60 = input.bool(true, "1H",  inline = "t2", group = grpData)
+en240= input.bool(true, "4H",  inline = "t2", group = grpData)
+enD  = input.bool(true, "1D",  inline = "t3", group = grpData)
+
+// ═══ ⑤ CALCULATION ═══
+grpCalc  = "⑤ Calculation"
+emaFastL = input.int(20,  "EMA Fast",       2, 200, group = grpCalc)
+emaMidL  = input.int(50,  "EMA Medium",     2, 300, group = grpCalc)
+emaSlowL = input.int(200, "EMA Slow",       2, 400, group = grpCalc)
+rsiL     = input.int(14,  "RSI",            2, 100, group = grpCalc)
+adxL     = input.int(14,  "ADX / DI",       2, 100, group = grpCalc)
+atrL     = input.int(14,  "ATR",            2, 100, group = grpCalc)
+slopeL   = input.int(3,   "EMA Slope Bars", 1, 20,  group = grpCalc)
+
+// ═══ ⑥ SMC · STRUCTURE ═══
+grpMS    = "⑥ SMC · Structure"
+anchorSel= input.string("Chart", "Bias Structure Anchor TF", options = ["Chart", "15", "30", "60", "240", "D"],
+     group = grpMS, tooltip = "HTF that defines bias structure (BOS/CHoCH/PD). Entries stay on chart TF.")
+extLen   = input.int(15, "Anchor Pivot Length", 3, 100, group = grpMS)
+intLen   = input.int(5,  "Chart Pivot Length",  2, 30,  group = grpMS)
+showMSlbl= input.bool(true, "Structure Labels", group = grpMS)
+
+// ═══ ⑦ SMC · LIQUIDITY ═══
+grpLQ    = "⑦ SMC · Liquidity"
+eqTol    = input.float(0.12, "Equal H/L Tolerance (× ATR)", 0.02, 1.0, 0.02, group = grpLQ)
+liqMax   = input.int(20, "Max Tracked Levels", 4, 40, group = grpLQ)
+seqBars  = input.int(12, "Sweep → CHoCH Window (bars)", 1, 60, group = grpLQ,
+     tooltip = "Liquidity sweep followed by chart CHoCH within this window = premium trigger.")
+
+// ═══ ⑧ SMC · FVG ═══
+grpFV    = "⑧ SMC · Fair Value Gaps"
+fvgMinATR= input.float(0.2, "Minimum FVG Size (× ATR)", 0.05, 3, 0.05, group = grpFV)
+fvgMax   = input.int(6, "Max FVG per Direction", 1, 15, group = grpFV)
+
+// ═══ ⑨ SMC · ORDER BLOCKS ═══
+grpOB    = "⑨ SMC · Order Blocks"
+obMax    = input.int(3,  "Max OB per Direction", 1, 8, group = grpOB)
+obLook   = input.int(12, "OB Lookback (bars)",   2, 60, group = grpOB)
+obDisp   = input.float(0.5, "Min Displacement Body (× ATR)", 0.0, 3.0, 0.1, group = grpOB)
+pdOffset = input.int(6, "P/D Bar Distance", 2, 30, group = grpOB)
+
+// ═══ ⑩ SESSIONS ═══
+grpSess  = "⑩ Sessions"
+sessMode = input.string("Killzones", "Session Filter",
+     options = ["Off", "Killzones", "Full Sessions", "Custom"], group = grpSess)
+sessTz   = input.string("GMT", "Timezone", group = grpSess,
+     options = ["GMT", "UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "Asia/Dubai", "Australia/Sydney"])
+sessHard = input.bool(true, "Out-of-Session = Hard Block", group = grpSess)
+kzLon    = input.session("0700-1000", "London Killzone",  group = grpSess)
+kzNY     = input.session("1200-1500", "New York Killzone", group = grpSess)
+fsLon    = input.session("0700-1600", "London Full",       group = grpSess)
+fsNY     = input.session("1200-2100", "New York Full",     group = grpSess)
+fsAsia   = input.session("0000-0700", "Asia Full",         group = grpSess)
+useAsia  = input.bool(false, "Include Asia", group = grpSess)
+custSess = input.session("0700-2100", "Custom Window", group = grpSess)
+blockRoll= input.bool(true, "Block Rollover", inline = "b1", group = grpSess)
+rollSess = input.session("2050-2210", "", inline = "b1", group = grpSess)
+blockFri = input.bool(true, "Block Late Friday", inline = "b2", group = grpSess)
+friSess  = input.session("1900-2359:6", "", inline = "b2", group = grpSess)
+
+// ═══ ⑪ DECISION ═══
+grpV3    = "⑪ Decision"
+qMinAplus= input.int(80, "A+ Setup Threshold", 60, 100, group = grpV3)
+qMinA    = input.int(68, "A Setup Threshold",  50, 95,  group = grpV3)
+biasDead = input.float(3.0, "Bias Deadzone (± around 50)", 0.0, 15.0, 0.5, group = grpV3)
+minChkPct= input.int(70, "Min Checklist % for A+", 40, 100, group = grpV3)
+
+// ═══ ⑫ NO TRADE ═══
+grpNT    = "⑫ NO TRADE (weighted)"
+ntThresh = input.int(45, "NO TRADE Score Threshold", 10, 100, group = grpNT,
+     tooltip = "Sum of active penalties. Higher = more permissive.")
+ntAdx    = input.float(18, "Minimum ADX", 5, 40, group = grpNT)
+atrRankL = input.int(200, "ATR Percentile Lookback", 20, 1000, group = grpNT)
+atrRankMin= input.int(15, "Minimum ATR Percentile", 1, 90, group = grpNT,
+     tooltip = "Instrument-agnostic volatility floor. Replaces raw ATR%-of-price.")
+ntAlign  = input.int(55, "Minimum TF Alignment (%)", 30, 90, group = grpNT)
+ntRisk   = input.int(65, "Maximum Risk Tolerated", 30, 100, group = grpNT)
+ntRange  = input.int(20, "Range Candles Lookback", 5, 100, group = grpNT)
+hardStruct= input.bool(false, "No Structure = Hard Block", group = grpNT)
+
+// ═══ ⑬ TRADE PLAN ═══
+grpPlan  = "⑬ Trade Plan"
+slBuf    = input.float(0.25, "SL Buffer (× ATR)", 0.0, 2.0, 0.05, group = grpPlan)
+rr1      = input.float(1.5, "TP1 R multiple", 0.5, 10, 0.1, group = grpPlan)
+rr2      = input.float(3.0, "TP2 R multiple", 0.5, 20, 0.1, group = grpPlan)
+minRR    = input.float(1.5, "Minimum RR to Liquidity Target", 0.5, 10, 0.1, group = grpPlan)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  THEME / FORMAT
+// ═══════════════════════════════════════════════════════════════════════
+f_theme() =>
+    dark = mode == "Dark"
+    bg   = dark ? color.new(#0e0e12, transp) : color.new(#f5f5f7, transp)
+    tx   = dark ? color.new(#e8e8ea, 0)      : color.new(#1a1a1a, 0)
+    gd   = dark ? color.new(#2a2a33, 0)      : color.new(#d0d0d5, 0)
+    hd   = useCustom ? cHeadIn : (dark ? #1e88e5 : #1565c0)
+    bl   = useCustom ? cBullIn : #26a69a
+    be   = useCustom ? cBearIn : #ef5350
+    ne   = useCustom ? cNeutIn : #ffb300
+    [bg, tx, gd, hd, bl, be, ne]
+
+f_txtSize() =>
+    switch txtIn
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.large
+
+f_pos() =>
+    switch posIn
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+[bg, txt, grid, head, bull, bear, neut] = f_theme()
+tsz = f_txtSize()
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BASE SERIES (chart TF, computed once)
+// ═══════════════════════════════════════════════════════════════════════
+atr     = ta.atr(atrL)
+atrSafe = math.max(nz(atr), syminfo.mintick)
+emaFast = ta.ema(close, emaFastL)
+rsiCur  = ta.rsi(close, rsiL)
+
+volRaw  = nz(volume)
+volSma  = ta.sma(volRaw, 50)
+volOk   = volRaw > 0 or nz(volSma) > 0
+relVol  = nz(volSma) > 0 ? volRaw / volSma : 1.0
+
+atrRank = nz(ta.percentrank(atr, atrRankL), 50.0)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SESSIONS
+// ═══════════════════════════════════════════════════════════════════════
+f_in(simple string s) => not na(time(timeframe.period, s, sessTz))
+
+inAsia  = useAsia and f_in(fsAsia)
+inSess  = switch sessMode
+    "Off"           => true
+    "Killzones"     => f_in(kzLon) or f_in(kzNY) or inAsia
+    "Full Sessions" => f_in(fsLon) or f_in(fsNY) or inAsia
+    => f_in(custSess)
+rollBlk = blockRoll and f_in(rollSess)
+friBlk  = blockFri and f_in(friSess)
+sessOk  = inSess and not rollBlk and not friBlk
+sessTxt = not inSess ? "Outside Window" : rollBlk ? "Rollover" : friBlk ? "Late Friday" : "Open"
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MTF TREND BUNDLE
+// ═══════════════════════════════════════════════════════════════════════
+f_norm(float x, float scale) =>
+    s = math.max(scale, syminfo.mintick)
+    math.max(0.0, math.min(1.0, 0.5 + x / (2.0 * s)))
+
+f_trendBundle() =>
+    eF = ta.ema(close, emaFastL)
+    eM = ta.ema(close, emaMidL)
+    eS = ta.ema(close, emaSlowL)
+    rs = ta.rsi(close, rsiL)
+    at = math.max(nz(ta.atr(atrL)), syminfo.mintick)
+    [_, __, hi] = ta.macd(close, 12, 26, 9)
+    [dp, dm, ax] = ta.dmi(adxL, adxL)
+    vr = nz(volume)
+    vs = ta.sma(vr, 50)
+    vok = vr > 0 or nz(vs) > 0
+    rv = (vok and nz(vs) > 0) ? vr / vs : 1.0
+    f1 = f_norm(eF - eM, at * 1.5)
+    f2 = f_norm(eM - eS, at * 2.0)
+    f3 = f_norm(close - eS, at * 3.0)
+    f4 = f_norm(eF - eF[slopeL], at * 1.0)
+    f5 = math.max(0.0, math.min(1.0, rs / 100.0))
+    f6 = f_norm(hi, at * 0.5)
+    f7 = f_norm(dp - dm, 40.0)
+    vd = close >= open ? 1.0 : 0.0
+    f8 = vok ? 0.5 + (vd - 0.5) * math.min(rv, 2.0) / 2.0 : 0.5
+    ae = nz(at[3]) > 0 ? at / at[3] : 1.0
+    f9 = 0.5 + (vd - 0.5) * math.max(0.0, math.min(1.0, ae - 1.0))
+    ix = math.max(0.0, math.min(100.0, f1*15 + f2*15 + f3*10 + f4*10 + f5*15 + f6*15 + f7*10 + f8*5 + f9*5))
+    mc1 = (rs - 50.0) / 50.0
+    mc2 = math.max(-1.0, math.min(1.0, hi / (at * 0.5)))
+    mo = math.max(0.0, math.min(100.0, 50.0 + 25.0 * (mc1 + mc2)))
+    [ix, mo, ax]
+
+f_bundleSel(simple bool live) =>
+    [i, m, a] = f_trendBundle()
+    [live ? i : i[1], live ? m : m[1], live ? a : a[1]]
+
+f_class(float idx) =>
+    na(idx) ? "—" : idx >= 75 ? "Very Bullish" : idx >= 60 ? "Bullish" :
+     idx > 40 ? "Neutral" : idx > 25 ? "Bearish" : "Very Bearish"
+
+f_scoreColor(float idx, color bl, color be, color ne, color tx) =>
+    na(idx) ? tx : idx >= 60 ? bl : idx <= 40 ? be : ne
+
+lh = liveMode ? barmerge.lookahead_off : barmerge.lookahead_on
+
+f_htf(simple string tf, simple bool en) =>
+    float ri = na
+    float rm = na
+    float ra = na
+    if en
+        [x, y, z] = request.security(syminfo.tickerid, tf, f_bundleSel(liveMode), gaps = barmerge.gaps_off, lookahead = lh)
+        ri := x
+        rm := y
+        ra := z
+    [ri, rm, ra]
+
+[i1,  m1,  a1 ] = f_htf("1",   en1)
+[i5,  m5,  a5 ] = f_htf("5",   en5)
+[i15, m15, a15] = f_htf("15",  en15)
+[i30, m30, a30] = f_htf("30",  en30)
+[i60, m60, a60] = f_htf("60",  en60)
+[i240,m240,a240]= f_htf("240", en240)
+[iD,  mD,  aD ] = f_htf("D",   enD)
+
+var string[] tfNames = array.from("1m", "5m", "15m", "30m", "1H", "4H", "1D")
+var int[]    tfSecs  = array.from(60, 300, 900, 1800, 3600, 14400, 86400)
+var float[]  idxArr  = array.new<float>(7, na)
+var float[]  momArr  = array.new<float>(7, na)
+var float[]  adxArr  = array.new<float>(7, na)
+array.set(idxArr, 0, i1)
+array.set(idxArr, 1, i5)
+array.set(idxArr, 2, i15)
+array.set(idxArr, 3, i30)
+array.set(idxArr, 4, i60)
+array.set(idxArr, 5, i240)
+array.set(idxArr, 6, iD)
+array.set(momArr, 0, m1)
+array.set(momArr, 1, m5)
+array.set(momArr, 2, m15)
+array.set(momArr, 3, m30)
+array.set(momArr, 4, m60)
+array.set(momArr, 5, m240)
+array.set(momArr, 6, mD)
+array.set(adxArr, 0, a1)
+array.set(adxArr, 1, a5)
+array.set(adxArr, 2, a15)
+array.set(adxArr, 3, a30)
+array.set(adxArr, 4, a60)
+array.set(adxArr, 5, a240)
+array.set(adxArr, 6, aD)
+
+chartSecs = timeframe.in_seconds(timeframe.period)
+nTf = 7
+cnt = 0
+sumI = 0.0
+sumM = 0.0
+sumA = 0.0
+bullCnt = 0
+bearCnt = 0
+for i = 0 to nTf - 1
+    v = array.get(idxArr, i)
+    excluded = (skipLower and array.get(tfSecs, i) < chartSecs) or na(v)
+    if not excluded
+        cnt  += 1
+        sumI += v
+        sumM += nz(array.get(momArr, i), 50.0)
+        sumA += nz(array.get(adxArr, i), 0.0)
+        if v >= 55
+            bullCnt += 1
+        else if v <= 45
+            bearCnt += 1
+
+cntF     = math.max(cnt, 1)
+avgIdx   = cnt > 0 ? sumI / cntF : na
+avgMom   = cnt > 0 ? sumM / cntF : na
+avgAdx   = cnt > 0 ? sumA / cntF : na
+alignFrac= cnt > 0 ? math.max(bullCnt, bearCnt) * 1.0 / cntF : 0.0
+alignPct = math.round(100.0 * alignFrac)
+strength = na(avgIdx) ? 0.0 : math.abs(avgIdx - 50.0) / 50.0
+confidence = cnt > 0 ? math.round(100.0 * (0.6 * alignFrac + 0.4 * strength)) : 0
+mktState = cnt == 0 ? "No Data" :
+     avgAdx >= 25 and alignPct >= 70 ? "Strong Trend" :
+     alignPct < 55 ? "Range / Indecisive" :
+     avgAdx >= 20 ? "Trend" : "Transition"
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ANCHOR STRUCTURE (HTF bias)
+// ═══════════════════════════════════════════════════════════════════════
+f_structBundle() =>
+    var float eHi = na
+    var float eLo = na
+    var float pHi = na
+    var float pLo = na
+    var int   trend = 0
+    var bool  hiBrk = false
+    var bool  loBrk = false
+    var int   swingH = 0
+    var int   swingL = 0
+    int   bos = 0
+    int   choch = 0
+    float eqh = na
+    float eql = na
+    at = math.max(nz(ta.atr(atrL)), syminfo.mintick)
+    ph = ta.pivothigh(high, extLen, extLen)
+    pl = ta.pivotlow(low, extLen, extLen)
+    if not na(ph)
+        pHi := eHi
+        eHi := ph
+        hiBrk := false
+        swingH := na(pHi) ? 0 : (ph > pHi ? 1 : 2)
+        if not na(pHi) and math.abs(ph - pHi) <= eqTol * at
+            eqh := math.max(ph, pHi)
+    if not na(pl)
+        pLo := eLo
+        eLo := pl
+        loBrk := false
+        swingL := na(pLo) ? 0 : (pl > pLo ? 3 : 4)
+        if not na(pLo) and math.abs(pl - pLo) <= eqTol * at
+            eql := math.min(pl, pLo)
+    if not na(eHi) and not hiBrk and close > eHi
+        hiBrk := true
+        if trend == 1
+            bos := 1
+        else
+            choch := 1
+            trend := 1
+    if not na(eLo) and not loBrk and close < eLo
+        loBrk := true
+        if trend == -1
+            bos := -1
+        else
+            choch := -1
+            trend := -1
+    [eHi, eLo, trend, bos, choch, eqh, eql, swingH, swingL, ph, pl]
+
+f_structSel(simple bool live) =>
+    [a, b, c, d, e, f, g, h, i, j, k] = f_structBundle()
+    [live ? a : a[1], live ? b : b[1], live ? c : c[1], live ? d : d[1],
+     live ? e : e[1], live ? f : f[1], live ? g : g[1], live ? h : h[1],
+     live ? i : i[1], live ? j : j[1], live ? k : k[1]]
+
+smcTF = anchorSel == "Chart" ? timeframe.period : anchorSel
+
+[sHi, sLo, sTrend, sBos, sChoch, sEqh, sEql, sSwH, sSwL, sPh, sPl] =
+     request.security(syminfo.tickerid, smcTF, f_structSel(liveMode), gaps = barmerge.gaps_off, lookahead = lh)
+
+bosUp   = sBos == 1 and nz(sBos[1]) != 1
+bosDn   = sBos == -1 and nz(sBos[1]) != -1
+chochUp = sChoch == 1 and nz(sChoch[1]) != 1
+chochDn = sChoch == -1 and nz(sChoch[1]) != -1
+newPh   = not na(sPh) and na(sPh[1])
+newPl   = not na(sPl) and na(sPl[1])
+newEqh  = not na(sEqh) and na(sEqh[1])
+newEql  = not na(sEql) and na(sEql[1])
+
+var string lastBOS = "—"
+var string lastCHoCH = "—"
+if bosUp
+    lastBOS := "BOS ▲"
+if bosDn
+    lastBOS := "BOS ▼"
+if chochUp
+    lastCHoCH := "CHoCH ▲"
+if chochDn
+    lastCHoCH := "CHoCH ▼"
+
+f_swTxt(int h, int l) =>
+    hs = h == 1 ? "HH" : h == 2 ? "LH" : "—"
+    ls = l == 3 ? "HL" : l == 4 ? "LL" : "—"
+    hs + "/" + ls
+
+structTxt = sTrend == 1 ? "Bullish" : sTrend == -1 ? "Bearish" : "Undefined"
+structCol = sTrend == 1 ? bull : sTrend == -1 ? bear : neut
+
+if showDraw and showMSlbl
+    if bosUp or chochUp
+        label.new(bar_index, sHi, bosUp ? "BOS ▲" : "CHoCH ▲", style = label.style_label_down,
+             color = color.new(bull, 80), textcolor = bull, size = size.tiny)
+    if bosDn or chochDn
+        label.new(bar_index, sLo, bosDn ? "BOS ▼" : "CHoCH ▼", style = label.style_label_up,
+             color = color.new(bear, 80), textcolor = bear, size = size.tiny)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CHART STRUCTURE (entry timing)
+// ═══════════════════════════════════════════════════════════════════════
+phI = ta.pivothigh(high, intLen, intLen)
+plI = ta.pivotlow(low, intLen, intLen)
+
+var float iHi = na
+var float iLo = na
+var bool  iHiBrk = false
+var bool  iLoBrk = false
+var int   iTrend = 0
+bool iBosUp = false
+bool iBosDn = false
+bool iChochUp = false
+bool iChochDn = false
+
+if not na(phI)
+    iHi := phI
+    iHiBrk := false
+if not na(plI)
+    iLo := plI
+    iLoBrk := false
+if barstate.isconfirmed and not na(iHi) and not iHiBrk and close > iHi
+    iHiBrk := true
+    if iTrend == 1
+        iBosUp := true
+    else
+        iChochUp := true
+        iTrend := 1
+if barstate.isconfirmed and not na(iLo) and not iLoBrk and close < iLo
+    iLoBrk := true
+    if iTrend == -1
+        iBosDn := true
+    else
+        iChochDn := true
+        iTrend := -1
+
+dispOk = math.abs(close - open) >= obDisp * atrSafe
+
+// ═══════════════════════════════════════════════════════════════════════
+//  LIQUIDITY
+// ═══════════════════════════════════════════════════════════════════════
+type Lq
+    float price
+    int   side
+    bool  eq
+    bool  swept
+    line  ln
+    label lb
+
+var array<Lq> liqs = array.new<Lq>()
+var string lastSweep = "—"
+var int lastSweepUpBar = na
+var int lastSweepDnBar = na
+
+f_addLq(float p, int side, bool eq) =>
+    if not na(p)
+        c = eq ? neut : color.new(#90a4ae, 0)
+        line ln = na
+        label lb = na
+        if showDraw
+            ln := line.new(bar_index, p, bar_index + 3, p, color = c, width = eq ? 2 : 1,
+                 style = eq ? line.style_solid : line.style_dotted)
+            lb := label.new(bar_index + 3, p, eq ? (side == 1 ? "EQH" : "EQL") : (side == 1 ? "BSL" : "SSL"),
+                 style = label.style_label_left, color = color.new(c, 90), textcolor = c, size = size.tiny)
+        array.push(liqs, Lq.new(p, side, eq, false, ln, lb))
+        if array.size(liqs) > liqMax
+            old = array.shift(liqs)
+            if not na(old.ln)
+                line.delete(old.ln)
+            if not na(old.lb)
+                label.delete(old.lb)
+
+if newEqh
+    f_addLq(sEqh, 1, true)
+else if newPh
+    f_addLq(sPh, 1, false)
+if newEql
+    f_addLq(sEql, -1, true)
+else if newPl
+    f_addLq(sPl, -1, false)
+
+bool sweepUp = false
+bool sweepDn = false
+int liqAbove = 0
+int liqBelow = 0
+float nearestAbove = na
+float nearestBelow = na
+
+if array.size(liqs) > 0
+    i = 0
+    while i < array.size(liqs)
+        lv = array.get(liqs, i)
+        if not lv.swept and not na(lv.ln)
+            line.set_x2(lv.ln, bar_index + 3)
+            label.set_x(lv.lb, bar_index + 3)
+        if barstate.isconfirmed and not lv.swept
+            if lv.side == 1 and high > lv.price and close <= lv.price
+                lv.swept := true
+                sweepUp := true
+                lastSweep := (lv.eq ? "EQH" : "BSL") + " ⚡"
+                lastSweepUpBar := bar_index
+                if not na(lv.ln)
+                    line.set_color(lv.ln, color.new(color.gray, 45))
+                    label.set_text(lv.lb, "swept ⚡")
+            else if lv.side == -1 and low < lv.price and close >= lv.price
+                lv.swept := true
+                sweepDn := true
+                lastSweep := (lv.eq ? "EQL" : "SSL") + " ⚡"
+                lastSweepDnBar := bar_index
+                if not na(lv.ln)
+                    line.set_color(lv.ln, color.new(color.gray, 45))
+                    label.set_text(lv.lb, "swept ⚡")
+            else if (lv.side == 1 and close > lv.price) or (lv.side == -1 and close < lv.price)
+                lv.swept := true
+                if not na(lv.ln)
+                    line.set_color(lv.ln, color.new(color.gray, 65))
+                    label.set_text(lv.lb, "taken")
+        if not lv.swept
+            if lv.price > close
+                liqAbove += 1
+                nearestAbove := na(nearestAbove) ? lv.price : math.min(nearestAbove, lv.price)
+            else
+                liqBelow += 1
+                nearestBelow := na(nearestBelow) ? lv.price : math.max(nearestBelow, lv.price)
+        i += 1
+
+seqBull = not na(lastSweepDnBar) and (bar_index - lastSweepDnBar) <= seqBars and iChochUp
+seqBear = not na(lastSweepUpBar) and (bar_index - lastSweepUpBar) <= seqBars and iChochDn
+var int lastSeqBar = na
+var int lastSeqDir = 0
+if seqBull
+    lastSeqBar := bar_index
+    lastSeqDir := 1
+if seqBear
+    lastSeqBar := bar_index
+    lastSeqDir := -1
+seqActive = not na(lastSeqBar) and (bar_index - lastSeqBar) <= seqBars
+seqDir    = seqActive ? lastSeqDir : 0
+
+// ═══════════════════════════════════════════════════════════════════════
+//  FAIR VALUE GAPS
+// ═══════════════════════════════════════════════════════════════════════
+type Fvg
+    int   dir
+    float top
+    float bot
+    box   bx
+
+var array<Fvg> fvgs = array.new<Fvg>()
+int fvgBull = 0
+int fvgBear = 0
+
+f_addFvg(int dir, float top, float bot) =>
+    box b = na
+    if showDraw
+        b := box.new(bar_index - 2, top, bar_index, bot,
+             bgcolor = color.new(dir == 1 ? bull : bear, 82),
+             border_color = color.new(dir == 1 ? bull : bear, 55), border_width = 1)
+    array.push(fvgs, Fvg.new(dir, top, bot, b))
+    cntD = 0
+    for k = array.size(fvgs) - 1 to 0
+        ff = array.get(fvgs, k)
+        if ff.dir == dir
+            cntD += 1
+            if cntD > fvgMax
+                if not na(ff.bx)
+                    box.delete(ff.bx)
+                array.remove(fvgs, k)
+
+if barstate.isconfirmed and low > high[2] and (low - high[2]) >= fvgMinATR * atrSafe
+    f_addFvg(1, low, high[2])
+if barstate.isconfirmed and high < low[2] and (low[2] - high) >= fvgMinATR * atrSafe
+    f_addFvg(-1, low[2], high)
+
+if array.size(fvgs) > 0
+    i = 0
+    while i < array.size(fvgs)
+        f = array.get(fvgs, i)
+        keep = true
+        if not na(f.bx)
+            box.set_right(f.bx, bar_index)
+        if barstate.isconfirmed
+            mid = (f.top + f.bot) / 2.0
+            filled = f.dir == 1 ? low <= mid : high >= mid
+            inv = f.dir == 1 ? close < f.bot : close > f.top
+            if filled or inv
+                if not na(f.bx)
+                    box.delete(f.bx)
+                array.remove(fvgs, i)
+                keep := false
+        if keep
+            if f.dir == 1
+                fvgBull += 1
+            else
+                fvgBear += 1
+            i += 1
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ORDER BLOCKS
+// ═══════════════════════════════════════════════════════════════════════
+type Ob
+    int   dir
+    float top
+    float bot
+    box   bx
+    label lb
+
+var array<Ob> obs = array.new<Ob>()
+
+f_addOb(int dir) =>
+    float top = na
+    float bot = na
+    for j = 1 to obLook
+        cond = dir == 1 ? close[j] < open[j] : close[j] > open[j]
+        if cond
+            top := high[j]
+            bot := low[j]
+            break
+    if not na(top)
+        box b = na
+        label l = na
+        if showDraw
+            b := box.new(bar_index - 1, top, bar_index, bot,
+                 bgcolor = color.new(dir == 1 ? bull : bear, 78),
+                 border_color = color.new(dir == 1 ? bull : bear, 30), border_width = 1)
+            l := label.new(bar_index, (top + bot) / 2.0, dir == 1 ? "OB+" : "OB-",
+                 style = label.style_label_left, color = color.new(dir == 1 ? bull : bear, 60),
+                 textcolor = color.white, size = size.tiny)
+        array.push(obs, Ob.new(dir, top, bot, b, l))
+        cntD = 0
+        for k = array.size(obs) - 1 to 0
+            oo = array.get(obs, k)
+            if oo.dir == dir
+                cntD += 1
+                if cntD > obMax
+                    if not na(oo.bx)
+                        box.delete(oo.bx)
+                    if not na(oo.lb)
+                        label.delete(oo.lb)
+                    array.remove(obs, k)
+
+if (iBosUp or iChochUp) and dispOk
+    f_addOb(1)
+if (iBosDn or iChochDn) and dispOk
+    f_addOb(-1)
+
+bool priceInOB = false
+int  obDirAt = 0
+int  lastObDir = 0
+string obTxt = "—"
+color obCol = neut
+
+if array.size(obs) > 0
+    i = 0
+    while i < array.size(obs)
+        o = array.get(obs, i)
+        keep = true
+        if not na(o.bx)
+            box.set_right(o.bx, bar_index)
+            if not na(o.lb)
+                label.set_x(o.lb, bar_index)
+        if close <= o.top and close >= o.bot
+            priceInOB := true
+            obDirAt := o.dir
+        if barstate.isconfirmed
+            inval = o.dir == 1 ? close < o.bot : close > o.top
+            if inval
+                if not na(o.bx)
+                    box.delete(o.bx)
+                if not na(o.lb)
+                    label.delete(o.lb)
+                array.remove(obs, i)
+                keep := false
+        if keep
+            lastObDir := o.dir
+            i += 1
+
+if priceInOB
+    obTxt := obDirAt == 1 ? "Price in OB+" : "Price in OB-"
+    obCol := obDirAt == 1 ? bull : bear
+else if lastObDir != 0
+    obTxt := lastObDir == 1 ? "OB+ Active" : "OB- Active"
+    obCol := lastObDir == 1 ? bull : bear
+
+// ═══════════════════════════════════════════════════════════════════════
+//  PREMIUM / DISCOUNT
+// ═══════════════════════════════════════════════════════════════════════
+var box pdPrem = na
+var box pdEq   = na
+var box pdDisc = na
+var line pdMark = na
+string pdTxt = "—"
+color  pdCol = neut
+float  pdFrac = na
+
+if not na(sHi) and not na(sLo) and sHi > sLo
+    rng = sHi - sLo
+    pdFrac := (close - sLo) / rng
+    pdTxt := pdFrac > 0.55 ? "Premium" : pdFrac < 0.45 ? "Discount" : "Equilibrium"
+    pdCol := pdFrac > 0.55 ? bear : pdFrac < 0.45 ? bull : neut
+    if showDraw and barstate.islast
+        if not na(pdPrem)
+            box.delete(pdPrem)
+        if not na(pdEq)
+            box.delete(pdEq)
+        if not na(pdDisc)
+            box.delete(pdDisc)
+        if not na(pdMark)
+            line.delete(pdMark)
+        L = bar_index + pdOffset
+        R = bar_index + pdOffset + 3
+        pdPrem := box.new(L, sHi, R, sLo + rng * 0.55, bgcolor = color.new(bear, 70), border_color = color.new(bear, 40))
+        pdEq   := box.new(L, sLo + rng * 0.55, R, sLo + rng * 0.45, bgcolor = color.new(neut, 60), border_color = color.new(neut, 30))
+        pdDisc := box.new(L, sLo + rng * 0.45, R, sLo, bgcolor = color.new(bull, 70), border_color = color.new(bull, 40))
+        pdMark := line.new(L, close, R, close, color = color.white, width = 2)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BIAS
+// ═══════════════════════════════════════════════════════════════════════
+biasBull = not na(avgIdx) and avgIdx >= 50.0 + biasDead
+biasBear = not na(avgIdx) and avgIdx <= 50.0 - biasDead
+biasNone = not biasBull and not biasBear
+biasTxt  = biasBull ? "Bullish" : biasBear ? "Bearish" : "Neutral"
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SCORES
+// ═══════════════════════════════════════════════════════════════════════
+f_qualityScore() =>
+    s = 0.0
+    s += (biasBull and avgIdx >= 60) or (biasBear and avgIdx <= 40) ? 15 : (biasNone ? 0 : 5)
+    s += (biasBull and avgMom >= 55) or (biasBear and avgMom <= 45) ? 10 : 0
+    s += (biasBull and sTrend == 1) or (biasBear and sTrend == -1) ? 12 : 0
+    s += (biasBull and seqDir == 1) or (biasBear and seqDir == -1) ? 12 : 0
+    s += (biasBull and liqAbove > 0) or (biasBear and liqBelow > 0) ? 6 : 0
+    s += priceInOB and ((biasBull and obDirAt == 1) or (biasBear and obDirAt == -1)) ? 12 : (priceInOB ? 3 : 0)
+    s += (biasBull and fvgBull > 0) or (biasBear and fvgBear > 0) ? 10 : 0
+    s += (biasBull and pdTxt == "Discount") or (biasBear and pdTxt == "Premium") ? 8 : (pdTxt == "Equilibrium" ? 3 : 0)
+    s += volOk ? (relVol >= 1.2 ? 8 : relVol >= 1.0 ? 4 : 0) : 4
+    s += alignPct >= 80 ? 7 : alignPct >= 65 ? 4 : 0
+    math.round(math.max(0, math.min(100, s)))
+qualityScore = f_qualityScore()
+qualityClass = qualityScore >= qMinAplus ? "A+ Setup" : qualityScore >= qMinA ? "A Setup" :
+     qualityScore >= 55 ? "B Setup" : qualityScore >= 40 ? "C Setup" : "Do Not Trade"
+qualityCol   = qualityScore >= qMinAplus ? bull : qualityScore >= 55 ? neut : bear
+
+f_continuation() =>
+    c = 0.0
+    c += (na(avgMom) ? 0.0 : math.abs(avgMom - 50.0) / 50.0) * 25
+    c += (volOk ? math.min(relVol, 2.0) / 2.0 : 0.5) * 20
+    body = math.abs(close - open)
+    rngC = math.max(high - low, syminfo.mintick)
+    c += (body / rngC) * 20
+    slopeN = math.abs(emaFast - emaFast[slopeL]) / atrSafe
+    c += math.min(slopeN, 1.0) * 20
+    atrExpC = nz(atr[3]) > 0 ? atr / atr[3] : 1.0
+    c += math.max(0.0, math.min(1.0, atrExpC - 1.0)) * 15
+    math.round(math.max(0, math.min(100, c)))
+contIdx = f_continuation()
+
+f_exhaustion() =>
+    e = 0.0
+    e += (rsiCur >= 75 or rsiCur <= 25) ? 22 : (rsiCur >= 68 or rsiCur <= 32) ? 12 : 0
+    distE = math.abs(close - emaFast) / atrSafe
+    e += math.min(distE / 4.0, 1.0) * 22
+    divBear = high > high[1] and rsiCur < rsiCur[1] and rsiCur > 60
+    divBull = low  < low[1]  and rsiCur > rsiCur[1] and rsiCur < 40
+    e += (divBear or divBull) ? 20 : 0
+    e += volOk ? (relVol < 0.8 ? 18 : relVol < 1.0 ? 9 : 0) : 9
+    e += bar_index > slopeL * 2 and math.abs(close - close[slopeL]) < math.abs(close[slopeL] - close[slopeL * 2]) ? 18 : 0
+    math.round(math.max(0, math.min(100, e)))
+exhIdx = f_exhaustion()
+
+f_institutional() =>
+    body = close - open
+    rngI = math.max(high - low, syminfo.mintick)
+    impuls = body / rngI
+    vel = (close - close[slopeL]) / atrSafe
+    persist = 0
+    for k = 0 to 4
+        if not na(close[k]) and not na(open[k])
+            persist += close[k] >= open[k] ? 1 : -1
+    persistN = persist / 5.0
+    volW = volOk ? math.min(relVol, 2.0) / 2.0 : 0.5
+    raw = (impuls * 0.35 + math.max(-1.0, math.min(1.0, vel)) * 0.30 + persistN * 0.35) * volW
+    bp = math.round(math.max(0, math.min(100, 50 + raw * 50)))
+    [bp, 100 - bp]
+[buyersPct, sellersPct] = f_institutional()
+
+f_risk() =>
+    rk = 0
+    rk += exhIdx >= 65 ? 30 : exhIdx >= 45 ? 15 : 0
+    rk += qualityScore < 45 ? 25 : qualityScore < 60 ? 12 : 0
+    rk += alignPct < 55 ? 20 : alignPct < 70 ? 10 : 0
+    rk += (biasBull and pdTxt == "Premium") or (biasBear and pdTxt == "Discount") ? 15 : 0
+    rk += volOk and relVol < 0.8 ? 10 : 0
+    math.max(0, math.min(100, rk))
+riskScore = f_risk()
+riskClass = riskScore >= 80 ? "Extreme" : riskScore >= 60 ? "High" :
+     riskScore >= 40 ? "Medium" : riskScore >= 20 ? "Low" : "Very Low"
+riskCol   = riskScore >= 60 ? bear : riskScore >= 40 ? neut : bull
+
+// ── Checklist (volume item dropped when feed has no volume) ──
+chkStruct = (biasBull and sTrend == 1) or (biasBear and sTrend == -1)
+chkSeq    = (biasBull and seqDir == 1) or (biasBear and seqDir == -1)
+chkFVG    = (biasBull and fvgBull > 0) or (biasBear and fvgBear > 0)
+chkOB     = priceInOB and ((biasBull and obDirAt == 1) or (biasBear and obDirAt == -1))
+chkLiq    = (biasBull and liqAbove > 0) or (biasBear and liqBelow > 0)
+chkMom    = (biasBull and avgMom >= 55) or (biasBear and avgMom <= 45)
+chkTrend  = (biasBull and avgIdx >= 60) or (biasBear and avgIdx <= 40)
+chkVol    = volOk and relVol >= 1.0
+chkPD     = (biasBull and pdTxt == "Discount") or (biasBear and pdTxt == "Premium")
+chkTF     = alignPct >= 70
+chkSess   = sessOk
+chkTotal  = volOk ? 11 : 10
+checkCount = (chkStruct ? 1 : 0) + (chkSeq ? 1 : 0) + (chkFVG ? 1 : 0) + (chkOB ? 1 : 0) +
+             (chkLiq ? 1 : 0) + (chkMom ? 1 : 0) + (chkTrend ? 1 : 0) + (volOk and chkVol ? 1 : 0) +
+             (chkPD ? 1 : 0) + (chkTF ? 1 : 0) + (chkSess ? 1 : 0)
+checkPct = math.round(100.0 * checkCount / chkTotal)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  NO TRADE (weighted)
+// ═══════════════════════════════════════════════════════════════════════
+rangeCount = 0
+if not na(sHi) and not na(sLo)
+    for k = 0 to math.min(ntRange - 1, bar_index)
+        if high[k] <= sHi and low[k] >= sLo
+            rangeCount += 1
+rangePct = rangeCount * 1.0 / math.max(ntRange, 1)
+bodyRatio = (high - low) > 0 ? math.abs(close - open) / (high - low) : 0.0
+
+nt1  = mktState == "Range / Indecisive"
+nt2  = not na(avgAdx) and avgAdx < ntAdx
+nt3  = cnt > 0 and alignPct < ntAlign
+nt4  = contIdx < 30 and exhIdx > 55
+nt5  = atrRank < atrRankMin
+nt6  = bodyRatio < 0.25 and (volOk ? relVol < 1.0 : true)
+nt7  = rangePct >= 0.8
+nt8  = bullCnt > 0 and bearCnt > 0 and math.abs(bullCnt - bearCnt) <= 1
+nt9  = riskScore >= ntRisk
+nt10 = nz(sTrend, 0) == 0
+nt11 = biasNone
+nt12 = not sessOk
+
+ntScore = (nt1 ? 18 : 0) + (nt2 ? 15 : 0) + (nt3 ? 14 : 0) + (nt4 ? 10 : 0) +
+          (nt5 ? 20 : 0) + (nt6 ? 7 : 0) + (nt7 ? 10 : 0) + (nt8 ? 9 : 0) +
+          (nt9 ? 12 : 0) + (nt10 ? 12 : 0) + (nt11 ? 10 : 0) + (nt12 ? 25 : 0)
+
+hardBlock = (sessHard and nt12) or (hardStruct and nt10) or cnt == 0
+noTrade   = hardBlock or ntScore >= ntThresh
+
+f_reasons() =>
+    s = ""
+    s := s + (nt12 ? "• Session: " + sessTxt + "\n" : "")
+    s := s + (nt5  ? "• Volatility " + str.tostring(math.round(atrRank)) + "th pct\n" : "")
+    s := s + (nt1  ? "• Sideways Market\n"        : "")
+    s := s + (nt2  ? "• Low ADX\n"                : "")
+    s := s + (nt3  ? "• Divided Timeframes\n"     : "")
+    s := s + (nt8  ? "• Contradictory Signals\n"  : "")
+    s := s + (nt9  ? "• Elevated Risk\n"          : "")
+    s := s + (nt10 ? "• No Anchor Structure\n"    : "")
+    s := s + (nt11 ? "• Bias in Deadzone\n"       : "")
+    s := s + (nt4  ? "• Weak/Exhausted Impulse\n" : "")
+    s := s + (nt7  ? "• Prolonged Range\n"        : "")
+    s := s + (nt6  ? "• Small Candles\n"          : "")
+    s
+reasons = f_reasons()
+
+// ═══════════════════════════════════════════════════════════════════════
+//  TRADE PLAN
+// ═══════════════════════════════════════════════════════════════════════
+float slPrice = na
+float tp1P = na
+float tp2P = na
+float tpLiq = na
+float rrLiq = na
+float riskDist = na
+
+if not biasNone and not na(atr)
+    if biasBull
+        b = na(iLo) ? close - 1.5 * atrSafe : math.min(iLo, close - 0.5 * atrSafe)
+        slPrice := b - slBuf * atrSafe
+    else
+        b = na(iHi) ? close + 1.5 * atrSafe : math.max(iHi, close + 0.5 * atrSafe)
+        slPrice := b + slBuf * atrSafe
+    riskDist := math.abs(close - slPrice)
+    if riskDist > 0
+        tp1P := biasBull ? close + rr1 * riskDist : close - rr1 * riskDist
+        tp2P := biasBull ? close + rr2 * riskDist : close - rr2 * riskDist
+        tpLiq := biasBull ? nearestAbove : nearestBelow
+        if not na(tpLiq)
+            rrLiq := math.abs(tpLiq - close) / riskDist
+
+rrOk = na(rrLiq) or rrLiq >= minRR
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SIGNALS
+// ═══════════════════════════════════════════════════════════════════════
+conf = barstate.isconfirmed
+isAplus     = conf and not noTrade and rrOk and qualityScore >= qMinAplus and checkPct >= minChkPct
+isA         = conf and not noTrade and rrOk and not isAplus and qualityScore >= qMinA and checkPct >= minChkPct - 10
+trendFlip   = chochUp or chochDn
+riskHighNew = conf and riskScore >= 60 and riskScore[1] < 60
+extBull     = conf and not noTrade and not na(avgIdx) and avgIdx >= 80
+extBear     = conf and not noTrade and not na(avgIdx) and avgIdx <= 20
+highConf    = conf and not noTrade and confidence >= 75 and checkPct >= 65
+ntEnter     = conf and noTrade and not noTrade[1]
+ntExit      = conf and not noTrade and noTrade[1]
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════
+compact = viewMode == "Compact"
+var table dash = table.new(f_pos(), 3, 60, border_width = 1)
+
+f_sumRow(int row, string k, string v, color vc) =>
+    table.cell(dash, 0, row, k, text_color = txt, bgcolor = bg, text_size = tsz, text_halign = text.align_left)
+    table.cell(dash, 1, row, v, text_color = vc, bgcolor = bg, text_size = tsz)
+    table.merge_cells(dash, 1, row, 2, row)
+
+f_hdr(int row, string t) =>
+    table.cell(dash, 0, row, t, text_color = color.white, bgcolor = grid, text_size = tsz, text_halign = text.align_center)
+    table.merge_cells(dash, 0, row, 2, row)
+
+f_chk(bool ok) => ok ? "✓" : "✗"
+f_px(float p) => na(p) ? "—" : str.tostring(p, format.mintick)
+
+if barstate.islast
+    table.clear(dash, 0, 0, 2, 59)
+    r = 0
+    if noTrade
+        table.cell(dash, 0, r, "⛔  NO TRADE  " + str.tostring(ntScore) + "/" + str.tostring(ntThresh),
+             text_color = color.white, bgcolor = color.new(bear, 0), text_size = size.large, text_halign = text.align_center)
+        table.merge_cells(dash, 0, r, 2, r)
+        r += 1
+        table.cell(dash, 0, r, reasons + "Wait for better conditions.",
+             text_color = color.white, bgcolor = color.new(bear, 75), text_size = tsz, text_halign = text.align_left)
+        table.merge_cells(dash, 0, r, 2, r)
+        r += 1
+    else
+        table.cell(dash, 0, r, "✅ OPERABLE  ·  " + biasTxt + "  ·  risk " + str.tostring(ntScore),
+             text_color = color.white, bgcolor = color.new(bull, 20), text_size = tsz, text_halign = text.align_center)
+        table.merge_cells(dash, 0, r, 2, r)
+        r += 1
+
+    table.cell(dash, 0, r, "IMD v5 · " + syminfo.ticker + " · " + sessTxt, text_color = color.white,
+         bgcolor = head, text_size = tsz, text_halign = text.align_left)
+    table.merge_cells(dash, 0, r, 2, r)
+    r += 1
+
+    if showTF and not compact
+        table.cell(dash, 0, r, "TF",    text_color = txt, bgcolor = bg, text_size = tsz)
+        table.cell(dash, 1, r, "Index", text_color = txt, bgcolor = bg, text_size = tsz)
+        table.cell(dash, 2, r, "State", text_color = txt, bgcolor = bg, text_size = tsz)
+        r += 1
+        for i = 0 to nTf - 1
+            v    = array.get(idxArr, i)
+            excl = (skipLower and array.get(tfSecs, i) < chartSecs) or na(v)
+            cc   = f_scoreColor(v, bull, bear, neut, txt)
+            table.cell(dash, 0, r, array.get(tfNames, i), text_color = txt, bgcolor = bg, text_size = tsz)
+            table.cell(dash, 1, r, excl ? "—" : str.tostring(math.round(v)),
+                 text_color = excl ? txt : color.white, bgcolor = excl ? bg : color.new(cc, 15), text_size = tsz)
+            table.cell(dash, 2, r, excl ? "—" : f_class(v), text_color = cc, bgcolor = bg, text_size = tsz)
+            r += 1
+
+    if showSum
+        domCol = f_scoreColor(avgIdx, bull, bear, neut, txt)
+        f_hdr(r, "── SUMMARY ──")
+        r += 1
+        f_sumRow(r, "Market", na(avgIdx) ? "—" : f_class(avgIdx) + " (" + str.tostring(math.round(avgIdx)) + ")", domCol)
+        r += 1
+        f_sumRow(r, "Bias", biasTxt, biasBull ? bull : biasBear ? bear : neut)
+        r += 1
+        f_sumRow(r, "Confidence", str.tostring(confidence) + "%", confidence >= 70 ? bull : confidence >= 45 ? neut : bear)
+        r += 1
+        if not compact
+            f_sumRow(r, "TF Alignment", str.tostring(alignPct) + "% (" + str.tostring(math.max(bullCnt, bearCnt)) + "/" + str.tostring(cnt) + ")", domCol)
+            r += 1
+            f_sumRow(r, "Volatility", str.tostring(math.round(atrRank)) + "th pct" + (volOk ? "" : " · no vol data"),
+                 atrRank >= atrRankMin ? bull : bear)
+            r += 1
+        f_sumRow(r, "State", mktState, txt)
+        r += 1
+
+    if showSMC and not compact
+        f_hdr(r, "── SMART MONEY (" + (anchorSel == "Chart" ? timeframe.period : anchorSel) + ") ──")
+        r += 1
+        f_sumRow(r, "Structure", structTxt + " · " + f_swTxt(sSwH, sSwL), structCol)
+        r += 1
+        f_sumRow(r, "Last BOS", lastBOS, lastBOS == "—" ? txt : structCol)
+        r += 1
+        f_sumRow(r, "Last CHoCH", lastCHoCH, lastCHoCH == "—" ? txt : (str.contains(lastCHoCH, "▲") ? bull : bear))
+        r += 1
+        f_sumRow(r, "Liquidity", "▲" + str.tostring(liqAbove) + "  ▼" + str.tostring(liqBelow), neut)
+        r += 1
+        f_sumRow(r, "Last Sweep", lastSweep, lastSweep == "—" ? txt : neut)
+        r += 1
+        f_sumRow(r, "Sweep→CHoCH", seqDir == 1 ? "Bullish ▲" : seqDir == -1 ? "Bearish ▼" : "—",
+             seqDir == 1 ? bull : seqDir == -1 ? bear : txt)
+        r += 1
+        f_sumRow(r, "Order Block", obTxt, obCol)
+        r += 1
+        f_sumRow(r, "Valid FVGs", "▲" + str.tostring(fvgBull) + "  ▼" + str.tostring(fvgBear), neut)
+        r += 1
+        pdShow = na(pdFrac) ? "—" : pdTxt + " (" + str.tostring(math.round(pdFrac * 100)) + "%)"
+        f_sumRow(r, "Premium/Discount", pdShow, pdCol)
+        r += 1
+
+    if showV3
+        f_hdr(r, "── DECISION ──")
+        r += 1
+        f_sumRow(r, "Quality", noTrade ? "— (blocked)" : str.tostring(qualityScore) + "/100 · " + qualityClass, noTrade ? txt : qualityCol)
+        r += 1
+        if not compact
+            f_sumRow(r, "Continuation", str.tostring(contIdx) + "/100", contIdx >= 55 ? bull : neut)
+            r += 1
+            f_sumRow(r, "Exhaustion", str.tostring(exhIdx) + "/100", exhIdx >= 60 ? bear : exhIdx >= 40 ? neut : bull)
+            r += 1
+        f_sumRow(r, "Institutional", "Buy " + str.tostring(buyersPct) + "% / Sell " + str.tostring(sellersPct) + "%", buyersPct >= 50 ? bull : bear)
+        r += 1
+        f_sumRow(r, "Risk", riskClass + " (" + str.tostring(riskScore) + ")", riskCol)
+        r += 1
+        f_sumRow(r, "Checklist", str.tostring(checkCount) + "/" + str.tostring(chkTotal) + " · " + str.tostring(checkPct) + "%",
+             checkPct >= minChkPct ? bull : checkPct >= 50 ? neut : bear)
+        r += 1
+        if not compact
+            c1 = "Str " + f_chk(chkStruct) + "  Seq " + f_chk(chkSeq) + "  FVG " + f_chk(chkFVG) + "  OB " + f_chk(chkOB) + "  Liq " + f_chk(chkLiq) + "  Ses " + f_chk(chkSess)
+            c2 = "Mom " + f_chk(chkMom) + "  Trn " + f_chk(chkTrend) + (volOk ? "  Vol " + f_chk(chkVol) : "") + "  P/D " + f_chk(chkPD) + "  TF " + f_chk(chkTF)
+            table.cell(dash, 0, r, c1, text_color = txt, bgcolor = bg, text_size = size.tiny, text_halign = text.align_left)
+            table.merge_cells(dash, 0, r, 2, r)
+            r += 1
+            table.cell(dash, 0, r, c2, text_color = txt, bgcolor = bg, text_size = size.tiny, text_halign = text.align_left)
+            table.merge_cells(dash, 0, r, 2, r)
+            r += 1
+
+    if showPlan and not noTrade and not biasNone and not na(slPrice)
+        f_hdr(r, "── TRADE PLAN (" + (biasBull ? "LONG" : "SHORT") + ") ──")
+        r += 1
+        f_sumRow(r, "Entry", f_px(close), txt)
+        r += 1
+        f_sumRow(r, "Stop", f_px(slPrice), bear)
+        r += 1
+        f_sumRow(r, "TP1 (" + str.tostring(rr1) + "R)", f_px(tp1P), bull)
+        r += 1
+        f_sumRow(r, "TP2 (" + str.tostring(rr2) + "R)", f_px(tp2P), bull)
+        r += 1
+        f_sumRow(r, "Liq Target", na(tpLiq) ? "—" : f_px(tpLiq) + "  (" + str.tostring(math.round(rrLiq, 2)) + "R)",
+             rrOk ? bull : bear)
+        r += 1
+        f_sumRow(r, "Risk (ticks)", str.tostring(math.round(riskDist / syminfo.mintick)), txt)
+        r += 1
+
+    if isAplus or isA
+        table.cell(dash, 0, r, (isAplus ? "★ A+ " : "☆ A ") + (biasBull ? "BUY" : "SELL"),
+             text_color = color.white, bgcolor = biasBull ? bull : bear, text_size = tsz, text_halign = text.align_center)
+        table.merge_cells(dash, 0, r, 2, r)
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ALERTS
+// ═══════════════════════════════════════════════════════════════════════
+alertcondition(bosUp or bosDn,      "SMC · Anchor BOS",      "IMD: Anchor BOS on {{ticker}}")
+alertcondition(chochUp or chochDn,  "SMC · Anchor CHoCH",    "IMD: Anchor CHoCH on {{ticker}}")
+alertcondition(sweepUp or sweepDn,  "SMC · Liquidity Sweep", "IMD: Liquidity Sweep on {{ticker}}")
+alertcondition(seqBull or seqBear,  "SMC · Sweep→CHoCH",     "IMD: Sweep + CHoCH sequence on {{ticker}}")
+alertcondition(trendFlip,           "V3 · Trend Change",     "IMD: Trend Change on {{ticker}}")
+alertcondition(isAplus,             "V3 · A+ Entry",         "IMD: A+ Setup on {{ticker}} — manage risk")
+alertcondition(isA,                 "V3 · A Entry",          "IMD: A Setup on {{ticker}}")
+alertcondition(riskHighNew,         "V3 · High Risk",        "IMD: HIGH risk on {{ticker}}")
+alertcondition(highConf,            "V4 · High Confidence",  "IMD: High confidence on {{ticker}}")
+alertcondition(extBull,             "V4 · Extreme Bullish",  "IMD: Extremely bullish on {{ticker}}")
+alertcondition(extBear,             "V4 · Extreme Bearish",  "IMD: Extremely bearish on {{ticker}}")
+alertcondition(ntEnter,             "V5 · NO TRADE On",      "IMD: NO TRADE activated on {{ticker}}")
+alertcondition(ntExit,              "V5 · NO TRADE Off",     "IMD: NO TRADE cleared on {{ticker}}")
+
+// ═══════════════════════════════════════════════════════════════════════
+//  EXPORTS
+// ═══════════════════════════════════════════════════════════════════════
+plot(avgIdx,          "Dominant Index", display = display.data_window)
+plot(confidence,      "Confidence",     display = display.data_window)
+plot(qualityScore,    "Quality",        display = display.data_window)
+plot(riskScore,       "Risk",           display = display.data_window)
+plot(ntScore,         "NoTrade Score",  display = display.data_window)
+plot(noTrade ? 1 : 0, "NO TRADE",       display = display.data_window)
+plot(atrRank,         "ATR Percentile", display = display.data_window)
+plot(slPrice,         "Stop",           display = display.data_window)
+plot(tp1P,            "TP1",            display = display.data_window)
+plot(tp2P,            "TP2",            display = display.data_window)
