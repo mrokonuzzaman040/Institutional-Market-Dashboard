@@ -33,6 +33,8 @@ callLblSz= input.string("Small", "Chart Label Size", options = ["Tiny", "Small",
      group = g02, active = callOn and callDraw)
 callLvlLb= input.bool(true, "Price Label on Each Level", group = g02, active = callOn and callDraw)
 callArrow= input.bool(true, "BUY / SELL Arrow at Entry Bar", group = g02, active = callOn)
+callDiag = input.bool(true, "Show Call Status on Chart", group = g02, active = callOn,
+     tooltip = "Small tag at the right edge showing why a call is not firing — which gate is blocking and by how much.")
 callPanel= input.bool(false, "Also Show Row in Side Panel", group = g02, active = callOn)
 
 g03 = "03 ▸ Entry Timing"
@@ -1835,6 +1837,37 @@ callFire = callReady and (na(lastCallBar) or (bar_index - lastCallBar) >= callCo
 if callFire
     lastCallBar := bar_index
 
+// ── why a call is NOT firing. Nine AND'd gates is a black box otherwise, and
+// "nothing appeared" is indistinguishable from "the script is broken".
+f_callBlock() =>
+    string s = "ready"
+    if not callOn
+        s := "call disabled"
+    else if noTrade
+        s := "NO TRADE  " + str.tostring(ntScore) + "/" + str.tostring(ntThrAdj)
+    else if callDir == 0
+        s := "bias neutral (deadzone)"
+    else if na(callRisk) or callRisk <= 0
+        s := "no valid stop yet"
+    else if not rrOk
+        s := "RR to liquidity " + str.tostring(math.round(nz(rrLiq), 2)) + " < " + str.tostring(minRR)
+    else if qualityScore < callMinQ
+        s := "quality " + str.tostring(qualityScore) + " < " + str.tostring(callMinQ)
+    else if checkPct < callMinCk
+        s := "checklist " + str.tostring(checkPct) + "% < " + str.tostring(callMinCk) + "%"
+    else if not callOfOk
+        s := "delta opposing bias"
+    else if not callEvent
+        s := "waiting for " + (callTrig == "Zone Tap" ? "zone tap" :
+             callTrig == "Impulse" ? "impulse" : "zone tap or impulse")
+    else if not na(lastCallBar) and (bar_index - lastCallBar) < callCool
+        s := "cooldown " + str.tostring(callCool - (bar_index - lastCallBar)) + " bars"
+    else if not conf
+        s := "bar not closed yet"
+    s
+callBlockTxt = f_callBlock()
+callBlocked  = callBlockTxt != "ready"
+
 f_why() =>
     w = ""
     w := w + ((callDir == 1 and seqBull) or (callDir == -1 and seqBear) ? "sweep→reversal · " : "")
@@ -1985,6 +2018,20 @@ if clOn and callDraw and not na(clEnt)
         label.set_text(clL2, (cT2Hit ? "✓ " : "") + "TP2 " + str.tostring(c2, format.mintick))
     if cT2Hit or cSlHit
         clOn := false
+
+// persistent status tag — always answers "why is there no call right now?"
+var label clStat = na
+if callDiag and callOn and barstate.islast
+    if na(clStat)
+        clStat := label.new(bar_index + callKeep, close, "", style = label.style_label_left,
+             size = size.small, textcolor = color.white, textalign = text.align_left)
+    label.set_xy(clStat, bar_index + callKeep, close)
+    label.set_text(clStat, callBlocked ?
+         "CALL BLOCKED\n" + callBlockTxt + "\nQ" + str.tostring(qualityScore) + "/" + str.tostring(callMinQ) +
+         "  chk " + str.tostring(checkPct) + "/" + str.tostring(callMinCk) + "%" +
+         (armed ? "\narmed " + armTxt : "") :
+         "CALL READY\n" + (callDir == 1 ? "BUY" : "SELL") + " on next close")
+    label.set_color(clStat, callBlocked ? color.new(grid, 25) : color.new(callDir == 1 ? bull : bear, 15))
 
 // ═══════════════════════════════════════════════════════════════════════
 //  PERFORMANCE TRACKER
@@ -2218,7 +2265,7 @@ rcOF   = (showFlow and ofRun and not compact) ? 6 : 0
 rcSMC  = (showSMC and not compact) ? 14 : 0
 rcLvl  = (showLvl and lvlOn and not compact) ? 6 : 0
 rcDec  = showV3 ? (compact ? 6 : 11) : 0
-rcPlan = (showPlan ? 13 : 0) + (callOn and callPanel ? 1 : 0) + (armOn ? 1 : 0)
+rcPlan = (showPlan ? 13 : 0) + (callOn and callPanel ? 2 : 0) + (armOn ? 1 : 0)
 rcStat = (showStat and statOn and not compact) ? 8 : 0
 
 // greedy fill: keep adding sections to the current panel until the next one
@@ -2371,6 +2418,7 @@ if barstate.islast
              color.white,
              callFire ? (callDir == 1 ? bull : bear) :
              color.new(lastCallDir == 1 ? bull : lastCallDir == -1 ? bear : grid, 55), false)
+        f_row(pPlan, "Call status", callBlockTxt, callBlocked ? neut : bull)
 
     if armOn and armed
         f_band(pPlan, "🎯 ARMED · " + armTxt, color.white,
