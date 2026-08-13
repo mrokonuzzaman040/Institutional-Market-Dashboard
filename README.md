@@ -811,13 +811,28 @@ drawing freezes on the chart as a record and the next call replaces it.
 The entry bar is never judged against its own high/low — that wick preceded the
 fill, so hit detection starts the bar after entry.
 
+Three things mark the call so direction is never ambiguous:
+
+1. **A `BUY` / `SELL` marker on the entry bar itself** — plotted below the bar for
+   longs, above for shorts. Always visible, never affected by chart margin.
+2. **A price label on every level** — `SL 1.08380`, `TP1 1.08555`, `TP2 1.08660`,
+   sitting on the line, ticking to `✓ TP1 …` as each is reached.
+3. **The full card**, anchored a few bars right of the live bar and following it
+   forward.
+
 | Drawing input | Default |
 |---|---|
 | `Draw Entry / SL / TP on Chart` | on |
 | `Shade Risk / Reward Zones` | on |
-| `Minimum Extension (bars)` | 25 |
+| `Card Offset from Price (bars)` | **3** |
 | `Chart Label Size` | Small |
-| `Also Show Row in Side Panel` | **off** |
+| `Price Label on Each Level` | on |
+| `BUY / SELL Arrow at Entry Bar` | on |
+| `Also Show Row in Side Panel` | off |
+
+**Keep `Card Offset` small.** It sets how far right of the live bar the card sits.
+TradingView's right margin is only a handful of bars, so a large offset parks the
+card off-screen — the lines still draw, but the text is invisible.
 
 The side-panel row is opt-in — turn it on only if you want a text summary
 alongside the chart card.

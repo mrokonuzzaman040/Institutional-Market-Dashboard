@@ -27,9 +27,12 @@ callOF   = input.bool(true, "Require Order Flow Not Opposing", group = g01, acti
 g02 = "02 ▸ Trade Call · Chart Card"
 callDraw = input.bool(true, "Draw Entry / SL / TP on Chart", group = g02, active = callOn)
 callShade= input.bool(true, "Shade Risk / Reward Zones", group = g02, active = callOn and callDraw)
-callKeep = input.int(25, "Minimum Extension (bars)", 5, 200, group = g02, active = callOn and callDraw)
+callKeep = input.int(3, "Card Offset from Price (bars)", 1, 20, group = g02, active = callOn and callDraw,
+     tooltip = "How far right of the current bar the card sits. Keep it small — large values push it past the chart's right margin where you cannot see it.")
 callLblSz= input.string("Small", "Chart Label Size", options = ["Tiny", "Small", "Normal", "Large"],
      group = g02, active = callOn and callDraw)
+callLvlLb= input.bool(true, "Price Label on Each Level", group = g02, active = callOn and callDraw)
+callArrow= input.bool(true, "BUY / SELL Arrow at Entry Bar", group = g02, active = callOn)
 callPanel= input.bool(false, "Also Show Row in Side Panel", group = g02, active = callOn)
 
 g03 = "03 ▸ Entry Timing"
@@ -1882,6 +1885,9 @@ var line  clT2  = na
 var box   clRisk = na
 var box   clRwd  = na
 var label clLb  = na
+var label clLs  = na
+var label clL1  = na
+var label clL2  = na
 var bool  clOn   = false
 var int   clDir  = 0
 var float clE = na
@@ -1900,6 +1906,10 @@ if callFire and callDraw
         line.delete(clT1)
         line.delete(clT2)
         label.delete(clLb)
+    if not na(clLs)
+        label.delete(clLs)
+        label.delete(clL1)
+        label.delete(clL2)
     if not na(clRisk)
         box.delete(clRisk)
     if not na(clRwd)
@@ -1925,6 +1935,13 @@ if callFire and callDraw
     clLb  := label.new(xR, clE, "", style = label.style_label_left, size = f_lblSz(),
          color = color.new(callDir == 1 ? bull : bear, 15), textcolor = color.white,
          textalign = text.align_left)
+    if callLvlLb
+        clLs := label.new(xR, clS, "", style = label.style_label_left, size = size.tiny,
+             color = color.new(bear, 20), textcolor = color.white)
+        clL1 := label.new(xR, c1, "", style = label.style_label_left, size = size.tiny,
+             color = color.new(bull, 35), textcolor = color.white)
+        clL2 := label.new(xR, c2, "", style = label.style_label_left, size = size.tiny,
+             color = color.new(bull, 20), textcolor = color.white)
 
 if clOn and callDraw and not na(clEnt)
     // never judge the entry bar against its own high/low — that wick preceded the fill
@@ -1935,7 +1952,9 @@ if clOn and callDraw and not na(clEnt)
             cT2Hit := true
         if clDir == 1 ? low <= clS : high >= clS
             cSlHit := true
-    xR = math.max(bar_index + 5, line.get_x1(clEnt) + callKeep)
+    // track just right of the live bar — anchoring far into the future puts the
+    // card past the chart's right margin, where it is invisible
+    xR = bar_index + callKeep
     line.set_x2(clEnt, xR)
     line.set_x2(clSl, xR)
     line.set_x2(clT1, xR)
@@ -1949,14 +1968,21 @@ if clOn and callDraw and not na(clEnt)
     label.set_text(clLb,
          (clDir == 1 ? "🟢 BUY  " : "🔴 SELL  ") + syminfo.ticker + "  " + timeframe.period + "\n" +
          stat + "\n" +
-         "─────────────\n" +
+         "──────────────\n" +
          "Entry  " + str.tostring(clE, format.mintick) + "\n" +
          "SL     " + str.tostring(clS, format.mintick) + "   (" + f_dist(clE, clS) + ")\n" +
          "TP1    " + str.tostring(c1, format.mintick) + "   (" + str.tostring(rr1) + "R)\n" +
          "TP2    " + str.tostring(c2, format.mintick) + "   (" + str.tostring(rr2) + "R)\n" +
          "Size   " + (na(callLots) ? "—" : str.tostring(math.round(callLots, 2)) + " lots") + "\n" +
-         "─────────────\n" + clWhy)
+         "──────────────\n" + clWhy)
     label.set_color(clLb, color.new(cSlHit ? bear : cT2Hit or cT1Hit ? bull : (clDir == 1 ? bull : bear), 15))
+    if not na(clLs)
+        label.set_xy(clLs, xR, clS)
+        label.set_text(clLs, "SL " + str.tostring(clS, format.mintick))
+        label.set_xy(clL1, xR, c1)
+        label.set_text(clL1, (cT1Hit ? "✓ " : "") + "TP1 " + str.tostring(c1, format.mintick))
+        label.set_xy(clL2, xR, c2)
+        label.set_text(clL2, (cT2Hit ? "✓ " : "") + "TP2 " + str.tostring(c2, format.mintick))
     if cT2Hit or cSlHit
         clOn := false
 
@@ -2476,6 +2502,12 @@ alertcondition(callFire,            "V7 · TRADE CALL",       "IMD: TRADE CALL o
 // ═══════════════════════════════════════════════════════════════════════
 //  EXPORTS
 // ═══════════════════════════════════════════════════════════════════════
+// entry markers — always visible on the entry bar itself, independent of the card
+plotshape(callArrow and callFire and callDir == 1, "BUY Call", shape.labelup,
+     location.belowbar, color.new(#26a69a, 0), text = "BUY", textcolor = color.white, size = size.small)
+plotshape(callArrow and callFire and callDir == -1, "SELL Call", shape.labeldown,
+     location.abovebar, color.new(#ef5350, 0), text = "SELL", textcolor = color.white, size = size.small)
+
 plot(avgIdx,          "Dominant Index", display = display.data_window)
 plot(confidence,      "Confidence",     display = display.data_window)
 plot(qualityScore,    "Quality",        display = display.data_window)
